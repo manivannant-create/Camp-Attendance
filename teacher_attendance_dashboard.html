@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camp teacher attendance</title>
+<style>
+:root{--bg:#f3f6f5;--ink:#15251f;--mut:#5d6f68;--card:#fff;--line:#d8e2de;--ok:#17724f;--okbg:#e2f3ea;--warn:#a5490f}
+@media(prefers-color-scheme:dark){:root{--bg:#101a17;--ink:#e6f0ec;--mut:#93a8a0;--card:#17251f;--line:#2b3d36;--ok:#5fd0a0;--okbg:#1c3a2d;--warn:#f0a56a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Source Sans 3","Segoe UI",system-ui,sans-serif}
+header{padding:24px 20px 8px;max-width:1200px;margin:auto}
+h1{margin:0;font-size:26px;font-weight:700}p.sub{margin:4px 0 0;color:var(--mut)}
+.bar{max-width:1200px;margin:16px auto;padding:0 20px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.bar input,.bar select,.bar button{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+.bar button{cursor:pointer;background:var(--ok);color:#fff;border-color:var(--ok)}.bar button.alt{background:var(--card);color:var(--ink);border-color:var(--line)}
+.bar button:focus-visible,.bar input:focus-visible,.bar select:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+#stats{max-width:1200px;margin:0 auto;padding:0 20px;display:flex;flex-wrap:wrap;gap:28px}
+.stat b{display:block;font-size:30px;line-height:1.1;color:var(--ok)}.stat span{color:var(--mut);font-size:13px}
+#msg{max-width:1200px;margin:10px auto;padding:0 20px;color:var(--mut)}#msg.err{color:var(--warn)}
+#grid{max-width:1200px;margin:16px auto 48px;padding:0 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
+.camp{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.camp h2{margin:0 0 2px;font-size:17px;display:flex;justify-content:space-between}
+.camp h2 em{font-style:normal;background:var(--okbg);color:var(--ok);border-radius:99px;padding:0 10px;font-size:13px;line-height:24px}
+.camp small{color:var(--mut)}
+table{width:100%;border-collapse:collapse;margin-top:8px;font-size:14px}
+th{text-align:left;font-weight:600;color:var(--mut);font-size:12px;border-bottom:1px solid var(--line);padding:4px 4px 4px 0}
+td{padding:5px 4px 5px 0;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border:0}
+.tag{display:inline-block;background:var(--okbg);color:var(--ok);border-radius:4px;padding:0 6px;font-size:12px;margin-right:3px;white-space:nowrap}
+.info{font-size:12.5px;color:var(--mut);margin:4px 0 0;line-height:1.55}.info a{color:var(--ok);text-decoration:none}
+.none{color:var(--mut);margin:8px 0 0}
+</style></head><body>
+<header><h1>Camp teacher attendance</h1>
+<p class="sub">Teachers marked <b>Present</b> (class actually taken), grouped by camp. Camps 131–169, 27 and 28 Sep 2026.</p></header>
+<div class="bar">
+<button id="load">Fetch live data</button>
+<label class="alt">or load saved JSON <input type="file" id="file" accept=".json"></label>
+<select id="vw"><option value="camp">Group by camp</option><option value="date">Group by date</option></select>
+<select id="fdist"><option value="">All districts</option></select>
+<select id="fd"><option value="">Both dates</option></select>
+<select id="fs"><option value="">All sessions</option></select>
+<input id="q" placeholder="Search teacher, camp, district, coordinator, ASC, ASA" style="min-width:300px">
+<label><input type="checkbox" id="hide" checked> Hide camps with no one present</label>
+<button class="alt" id="csv">Download CSV</button><button class="alt" id="sav">Save raw JSON</button>
+</div>
+<div id="stats"></div><div id="msg">Press “Fetch live data” to start.</div><div id="grid"></div>
+<script>
+const DIRECT="https://lepweknn8k.execute-api.ap-south-1.amazonaws.com/api/msmsbms/bmsCampTeacherAttendanceget";
+let LOCAL=["localhost","127.0.0.1"].includes(location.hostname);
+let HOSTED=location.protocol==="https:"&&!LOCAL;
+let BASE=LOCAL?"/proxy":DIRECT;
+// If server.py is serving this page (locally or on Render), it also serves /health with a marker.
+(async()=>{try{const r=await fetch("/health");if(r.ok&&(await r.text()).includes("bms-proxy")){
+  LOCAL=true;HOSTED=false;BASE="/proxy";
+  const b=$("load");if(b){b.disabled=false;b.title="";b.textContent="Fetch live data"}
+}}catch(e){}})();
+if(HOSTED){document.addEventListener("DOMContentLoaded",()=>{
+  const b=$("load");b.disabled=true;b.title="Live fetch isn't available on the hosted page (browser security policy blocks calls to this API). Run server.py or fetch_attendance.py locally, then load the JSON file below.";
+  b.textContent="Fetch live data (unavailable when hosted)";
+  $("msg").textContent="This hosted page can't call the attendance API directly. Run fetch_attendance.py (or server.py) on your computer, then use “load saved JSON” below to bring the data in.";
+});}
+const CAMPS=Array.from({length:39},(_,i)=>131+i);
+const DATES=(()=>{const a=[],d=new Date("2026-09-27T00:00:00Z"),end=new Date("2026-10-04T00:00:00Z");
+  while(d<=end){a.push(d.toISOString().slice(0,10));d.setUTCDate(d.getUTCDate()+1)}return a})();
+
+const META={};[
+[131,"CHENGALPATTU","Government Higher Secondary School - NEMMELI","MUNEERA Y",9500307688,"Sureshkumar",9944864849,"MUTHULAKSHMI P",6383605646],
+[132,"ARIYALUR","Ariyalur District Government Model School, Keezhapalur","RAJENDHIRAN K T",9047723117,"Anbarasan A",9047096739,"Sevvanthi U",9025095710],
+[133,"CHENGALPATTU","State Institute of Rural Development TN, Maraimalai Nagar","Rajendran M",9710069226,"Suresh Kumar R",9944864849,"Muthulakshmi P",6383605646],
+[134,"CHENNAI (EXT. GCC)","State Institute of Rural Development TN, Maraimalai Nagar","Gomathi V",8825732036,"Sridhar K",7397431207,"Pavithra M",7010109796],
+[135,"COIMBATORE","Coimbatore District Govt Model School - R.S.Puram","Kulanthivel",9952429943,"Jeevanandam P",9789455797,"Priya M",9361793808],
+[136,"CUDDALORE","Cuddalore District Government Model School","Ravichandran",7904611806,"Selvakumar E",8939070841,"Kuralarasan",9500591379],
+[137,"DHARMAPURI","Dharmapuri District Government Model School","Balakrishnan G",9976698761,"Syed Hussani Peeran N",8667813422,"Ragavan N R",8248048878],
+[138,"DINDIGUL","District Model School, Dindigul","Natarajan R",9486302524,"Raja Priya E",9943559164,"Gobianand",8883333581],
+[139,"ERODE","Erode District Model School","Gopal I",9443996651,"Brindavathi R",9840652905,"Kavitha P",9842469381],
+[140,"KALLAKURICHI","Kallakurichi District Government Model School","Kalaiselvan M",7373838200,"Boopathi K",8667658147,"Bharathi S",9788123467],
+[141,"KANCHEEPURAM","State Institute of Rural Development TN, Maraimalai Nagar","Lawrence M",8220119718,"Deepanbankar P",8438822676,"Ponnarasu N",9655293361],
+[142,"KANNIYAKUMARI","Kanniyakumari District Government Model School","Avila Borgia Joy",9486508100,"Subhitha S",9486140962,"Vibisha B C",9487110211],
+[143,"KARUR","Karur District Government Model School, Mayanur","Muthusamy G",7708879364,"Sasi K",8220269572,"Madhumithaa N",7010746451],
+[144,"KRISHNAGIRI","Krishnagiri District Model School","Pargunan S",9865072504,"Sundar D",8344369081,"Shanmugam S",7904486103],
+[145,"MADURAI","Madurai District Government Model School","Nachiyappan P",9487825830,"Divya Soundari",7708288752,"Bhagavathi Sakthi S",7639563213],
+[146,"MAYILADUTHURAI","District Model School, Mayiladuthurai","Ramesh N",9047040798,"Velayutham S",7418707410,"Priya J",7695829791],
+[147,"NAGAPATTINAM","District Model School, Nagapattinam","Tholkappiyan I",9787564474,"Aravindh D",9003417755,"Alphonse Mary S",9629889094],
+[148,"NAMAKKAL","District Govt Model School, Namakkal","Nallathambi K",9344544799,"Tamilarasi M",7871585803,"Jothika M",6383831198],
+[149,"PERAMBALUR","Perambalur District Model School","Kannan G",9787748777,"Gokulnath",9865653162,"Kowsalya P",8248780299],
+[150,"PUDUKKOTTAI","Pudukkottai District Govt Model School - Kaikurichi","Ganeshan S",8610238102,"Mohan",9597574619,"Abilash B",6385599532],
+[151,"RAMANATHAPURAM","Ramanathapuram District Model School, Muthupettai","Tamilmaran",9443502486,"Harisaravanan",8807445557,"Bavani R",8220751689],
+[152,"RANIPET","District Model School, Ranipet","Murugan",9894251357,"Gobudass",9500301918,"Thamizhiniyan",9791749517],
+[153,"SALEM","Salem District Government Model School","Anitha K",9442245083,"Deeparani",8144702588,"Ranjitham VK",9566631049],
+[154,"SIVAGANGAI","Sivagangai District Government Model School","Uthayashankar R",7904704461,"Rajaram",8778267303,"Kathyayeni C",8608147145],
+[155,"TENKASI","District Govt. Model School, Tenkasi","Jayalakshmi M",9524131751,"Jeyson C",9698037263,"Lalitha Ambikai B",9361943048],
+[156,"THANJAVUR","Government Model Higher Secondary School","Palanivelu R",9842207910,"Thirumurugan",8098261976,"Arthi S",9486407892],
+[157,"THE NILGIRIS","Nilgiris District Government Model School","Lakshman",9443584711,"Parthasarathi",8940043225,"Rajeshwari S",8925181841],
+[158,"THENI","Theni District Govt Model School - Thekkampatti","Nixon Y",9894791817,"Nathiya R",9789370129,"Sivamani R",7339046437],
+[159,"THOOTHUKKUDI","District Model School, Thoothukudi","Joseph Justinian Maria M",9443870127,"George Maniraj J",9791546565,"Gracelin Thangam S",6379594460],
+[160,"TIRUCHIRAPPALLI","Government Model Higher Secondary School","Jeyachandiran",9443173609,"Wilson",8844581291,"Ravichandran",8825617499],
+[161,"TIRUNELVELI","District Government Model School, Tirunelveli","Gomathi Sankar",9080868570,"Vignesh A",9944715992,"Vishali A",9342689884],
+[162,"TIRUPATHUR","Govt MGHSS Tirupattur","Krishnamoorthy K",9486881512,"Pavithra S",9361234046,"Purushothaman A",9790223521],
+[163,"TIRUPPUR","Tiruppur District Model School, Udumalpet","Rossammal K",9442651080,"Shanmugapriya R",7010657422,"Vanitha G",6379660838],
+[164,"TIRUVALLUR","Tiruvallur District Government Model School","Jambu M",9444790476,"Domnic Solomon S",8610164103,"Yasmine",8946042162],
+[165,"TIRUVANNAMALAI","District Model School, Tiruvannamalai","Srinivasan",7305859811,"Selvakumar E",8939070841,"Thangavel",9626991271],
+[166,"TIRUVARUR","Tiruvarur District Government Model School","Arulalan R",9578307137,"Divya R",9524531183,"Prabhakaran V",9788195631],
+[167,"VELLORE","District Model School, Vellore","Prasad R",8610324531,"Guna",9944434933,"Ramu",6369287463],
+[168,"VILLUPURAM","Government Model Higher Secondary School, Kedar","Raju",944329139,"Ashokkumar",7639028353,"Bakya M",7010195602],
+[169,"VIRUDHUNAGAR","Virudhunagar Model School","Vivekananthan I",8667342524,"Rasu",7010406653,"Sundarapandiaraja D",6383622379]
+].forEach(a=>META[a[0]]={d:a[1],sk:a[2],cn:a[3],cp:a[4],an:a[5],ap:a[6],sn:a[7],sp:a[8]});
+const M=c=>META[c]||{d:"Unknown",sk:"",cn:"",cp:"",an:"",ap:"",sn:"",sp:""};
+const ph=n=>n?`<a href="tel:${n}">${n}</a>`:"–";
+const info=c=>{const m=M(c);return `<div class="info">${esc(m.sk)}<br>Coordinator: ${esc(m.cn)} ${ph(m.cp)}<br>ASC: ${esc(m.an)} ${ph(m.ap)}<br>ASA: ${esc(m.sn)} ${ph(m.sp)}</div>`};
+
+let raw=[]; const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function one(c,d){
+  for(let t=0;t<3;t++){try{const r=await fetch(`${BASE}?campId=${c}&attendanceDate=${d}`);
+    if(!r.ok)throw new Error(r.status);const j=await r.json();return Array.isArray(j)?j:[];}
+    catch(e){if(t==2)throw e;await new Promise(r=>setTimeout(r,400*(t+1)));}}
+}
+async function fetchAll(){
+  const jobs=CAMPS.flatMap(c=>DATES.map(d=>[c,d])); let done=0,fail=0; raw=[];
+  $("msg").className="";
+  const worker=async()=>{while(jobs.length){const [c,d]=jobs.shift();
+    try{raw.push(...await one(c,d));}catch(e){fail++;}
+    $("msg").textContent=`Fetched ${++done} of ${CAMPS.length*DATES.length} requests…`;}};
+  await Promise.all(Array.from({length:6},worker));
+  if(fail&&!raw.length){$("msg").className="err";
+    $("msg").textContent="Requests failed (likely CORS). Start the local server with `python server.py` and open http://localhost:8000 instead.";return;}
+  $("msg").textContent=fail?`${fail} requests failed; showing the rest.`:`Loaded ${raw.length} attendance records.`;
+  init();
+}
+function init(){
+  raw.forEach(r=>{const m=M(r.campId);Object.assign(r,{district:m.d,coordName:m.cn,coordPhone:m.cp,ascName:m.an,ascPhone:m.ap,asaName:m.sn,asaPhone:m.sp})});
+  fill_d();
+  const fill=(el,vals,first)=>{const cur=el.value;el.innerHTML=`<option value="">${first}</option>`+vals.map(v=>`<option>${esc(v)}</option>`).join("");el.value=cur};
+  fill($("fd"),[...new Set(raw.map(r=>r.attendanceDate))].sort(),"Both dates");
+  fill($("fs"),[...new Set(raw.map(r=>r.session))].sort(),"All sessions");
+  render();
+}
+function fill_d(){const el=$("fdist"),cur=el.value;
+  el.innerHTML='<option value="">All districts</option>'+[...new Set(Object.values(META).map(m=>m.d))].sort().map(v=>`<option>${esc(v)}</option>`).join("");el.value=cur}
+function present(){
+  const d=$("fd").value,s=$("fs").value,q=$("q").value.toLowerCase();
+  return raw.filter(r=>r.attendanceStatus==="Present"&&(!d||r.attendanceDate===d)&&(!s||r.session===s)
+    &&(!$("fdist").value||M(r.campId).d===$("fdist").value)
+    &&(!q||[r.staffName,r.campId,M(r.campId).d,M(r.campId).cn,M(r.campId).an,M(r.campId).sn].join(" ").toLowerCase().includes(q)));
+}
+function render(){
+  const P=present(),by={};
+  P.forEach(r=>{(by[r.campId]??={})[r.staffId]??={n:r.staffName,ph:r.staffPhno,rows:[]};by[r.campId][r.staffId].rows.push(r)});
+  const hide=$("hide").checked,q=$("q").value;
+  if($("vw").value==="date"){
+    const dd={};P.forEach(r=>{((dd[r.attendanceDate]??={})[r.campId]??={})[r.staffId]??={n:r.staffName,ph:r.staffPhno,s:[]};dd[r.attendanceDate][r.campId][r.staffId].s.push(r.session)});
+    const dates=[...new Set(raw.map(r=>r.attendanceDate))].sort().filter(d=>!$("fd").value||d===$("fd").value);
+    $("stats").innerHTML=dates.map(d=>{const cs=dd[d]||{};const n=new Set(Object.values(cs).flatMap(o=>Object.keys(o))).size;
+      return `<div class="stat"><b>${n}</b><span>teachers present on ${d} (${Object.keys(cs).length} camps)</span></div>`}).join("");
+    $("grid").style.gridTemplateColumns="1fr";
+    $("grid").innerHTML=dates.map(d=>{const cs=dd[d]||{};const cids=Object.keys(cs).map(Number).sort((a,b)=>a-b);
+      return `<section class="camp"><h2>${d}<em>${cids.length} camps</em></h2>`+(cids.length?
+      `<table><tr><th>Camp / district / contacts</th><th>Teacher</th><th>Phone</th><th>Sessions present</th></tr>`+cids.flatMap(c=>Object.values(cs[c]).sort((a,b)=>a.n.localeCompare(b.n)).map((x,i,a)=>
+      `<tr>${i?"":`<td rowspan="${a.length}"><b>Camp ${c}</b> · ${esc(M(c).d)}${info(c)}</td>`}<td>${esc(x.n)}</td><td>${esc(x.ph)}</td><td>${x.s.sort().map(s=>`<span class="tag">${esc(s.replace("Session-","S"))}</span>`).join("")}</td></tr>`)).join("")+`</table>`
+      :`<p class="none">No teacher marked present.</p>`)+`</section>`}).join("");
+    return;
+  }
+  $("grid").style.gridTemplateColumns="";
+  const ids=[...new Set(raw.map(r=>r.campId))].sort((a,b)=>a-b).filter(c=>by[c]||(!hide&&!q&&!$("fdist").value));
+  const allT=new Set(P.map(r=>r.staffId));
+  $("stats").innerHTML=[[Object.keys(by).length,"camps with teachers present"],[allT.size,"unique teachers present"],[P.length,"present marks (date × session)"],[[...new Set(raw.map(r=>r.campId))].length,"camps returned data"]]
+    .map(([n,l])=>`<div class="stat"><b>${n}</b><span>${l}</span></div>`).join("");
+  $("grid").innerHTML=ids.map(c=>{const t=Object.values(by[c]||{});
+    return `<section class="camp"><h2>Camp ${c} · ${esc(M(c).d)}<em>${t.length} present</em></h2>${info(c)}`+(t.length?
+    `<table><tr><th>Teacher</th><th>Phone</th><th>Date / session</th></tr>`+t.sort((a,b)=>a.n.localeCompare(b.n)).map(x=>
+    `<tr><td>${esc(x.n)}</td><td>${esc(x.ph)}</td><td>`+x.rows.sort((a,b)=>(a.attendanceDate+a.session).localeCompare(b.attendanceDate+b.session))
+    .map(r=>`<span class="tag" title="Photo: ${esc(r.photoUpload)}&#10;Marked: ${esc(r.creationTs)}">${esc(r.attendanceDate.slice(5))} ${esc(r.session.replace("Session-","S"))}</span>`).join("")+`</td></tr>`).join("")+`</table>`
+    :`<p class="none">No teacher marked present.</p>`)+`</section>`}).join("");
+}
+$("load").onclick=fetchAll;
+["vw","fdist","fd","fs","hide"].forEach(i=>$(i).onchange=render);$("q").oninput=render;
+$("file").onchange=async e=>{const f=e.target.files[0];if(!f)return;
+  try{const j=JSON.parse(await f.text());raw=Array.isArray(j)?j.flat():[];$("msg").className="";$("msg").textContent=`Loaded ${raw.length} records from file.`;init();}
+  catch(x){$("msg").className="err";$("msg").textContent="That file isn't valid JSON.";}};
+function dl(name,text,type){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();}
+$("sav").onclick=()=>dl("attendance_raw.json",JSON.stringify(raw),"application/json");
+$("csv").onclick=()=>{const h=["campId","attendanceDate","session","staffId","staffName","staffPhno","attendanceStatus","photoUpload","creationTs","district","coordName","coordPhone","ascName","ascPhone","asaName","asaPhone"];
+  dl("present_teachers.csv",[h.join(",")].concat(present().map(r=>h.map(k=>`"${String(r[k]??"").replace(/"/g,'""')}"`).join(","))).join("\n"),"text/csv");};
+</script></body></html>
